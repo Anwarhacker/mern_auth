@@ -72,7 +72,11 @@ export default function RegisterPage() {
       setSuccess('Account created! Redirecting to login...');
       setTimeout(() => router.push('/login'), 1800);
     } catch (err) {
-      setError(err.response?.data?.message || 'Registration failed. Please try again.');
+      if (!err.response) {
+        setError('Cannot reach server. Make sure the backend is running on port 5000.');
+      } else {
+        setError(err.response.data?.message || 'Registration failed. Please try again.');
+      }
     } finally {
       setLoading(false);
     }
