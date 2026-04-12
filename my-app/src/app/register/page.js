@@ -73,7 +73,7 @@ export default function RegisterPage() {
       setTimeout(() => router.push('/login'), 1800);
     } catch (err) {
       if (!err.response) {
-        setError('Cannot reach server. Make sure the backend is running on port 5000.');
+        setError('Cannot connect to the server. If on Vercel, check you redeployed after setting NEXT_PUBLIC_API_URL.');
       } else {
         setError(err.response.data?.message || 'Registration failed. Please try again.');
       }
