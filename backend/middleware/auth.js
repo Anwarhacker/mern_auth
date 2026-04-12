@@ -1,5 +1,5 @@
-const jwt = require('jsonwebtoken');
-const db  = require('../config/db');
+const jwt      = require('jsonwebtoken');
+const supabase = require('../config/supabase');
 
 /**
  * Middleware: verifies JWT token from Authorization header.
@@ -15,16 +15,19 @@ const verifyToken = async (req, res, next) => {
     const token   = authHeader.split(' ')[1];
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    const [rows] = await db.execute(
-      'SELECT id, name, email, phone FROM users WHERE id = ?',
-      [decoded.id]
-    );
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('id, name, email, phone')
+      .eq('id', decoded.id)
+      .maybeSingle();
 
-    if (rows.length === 0) {
+    if (error) throw error;
+
+    if (!user) {
       return res.status(401).json({ message: 'User not found.' });
     }
 
-    req.user = rows[0];
+    req.user = user;
     next();
   } catch (err) {
     return res.status(401).json({ message: 'Invalid or expired token.' });

@@ -1,7 +1,7 @@
 const bcrypt   = require('bcryptjs');
 const jwt      = require('jsonwebtoken');
 const crypto   = require('crypto');
-const db       = require('../config/db');
+const supabase = require('../config/supabase');
 const { sendPasswordResetEmail } = require('../utils/mailer');
 
 // ─── Register ────────────────────────────────────────────────────────────────
@@ -16,20 +16,27 @@ const register = async (req, res, next) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters.' });
     }
 
-    const [existing] = await db.execute(
-      'SELECT id FROM users WHERE email = ?',
-      [email.toLowerCase().trim()]
-    );
-    if (existing.length > 0) {
+    // Check if email already exists
+    const { data: existing } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email.toLowerCase().trim())
+      .maybeSingle();
+
+    if (existing) {
       return res.status(409).json({ message: 'This email is already registered.' });
     }
 
     const hashed = await bcrypt.hash(password, 12);
 
-    await db.execute(
-      'INSERT INTO users (name, email, phone, password) VALUES (?, ?, ?, ?)',
-      [name.trim(), email.toLowerCase().trim(), phone?.trim() || null, hashed]
-    );
+    const { error } = await supabase.from('users').insert({
+      name:     name.trim(),
+      email:    email.toLowerCase().trim(),
+      phone:    phone?.trim() || null,
+      password: hashed,
+    });
+
+    if (error) throw error;
 
     res.status(201).json({ message: 'Registration successful! Please log in.' });
   } catch (err) {
@@ -46,15 +53,18 @@ const login = async (req, res, next) => {
       return res.status(400).json({ message: 'Email and password are required.' });
     }
 
-    const [rows] = await db.execute(
-      'SELECT * FROM users WHERE email = ?',
-      [email.toLowerCase().trim()]
-    );
-    if (rows.length === 0) {
+    const { data: user, error } = await supabase
+      .from('users')
+      .select('*')
+      .eq('email', email.toLowerCase().trim())
+      .maybeSingle();
+
+    if (error) throw error;
+
+    if (!user) {
       return res.status(401).json({ message: 'Invalid email or password.' });
     }
 
-    const user  = rows[0];
     const match = await bcrypt.compare(password, user.password);
     if (!match) {
       return res.status(401).json({ message: 'Invalid email or password.' });
@@ -84,25 +94,25 @@ const forgotPassword = async (req, res, next) => {
       return res.status(400).json({ message: 'Email is required.' });
     }
 
-    const [rows] = await db.execute(
-      'SELECT id FROM users WHERE email = ?',
-      [email.toLowerCase().trim()]
-    );
-
-    // Always return the same message to prevent email enumeration
     const genericMsg = 'If that email exists in our system, a reset link has been sent.';
 
-    if (rows.length === 0) {
-      return res.json({ message: genericMsg });
-    }
+    const { data: user } = await supabase
+      .from('users')
+      .select('id')
+      .eq('email', email.toLowerCase().trim())
+      .maybeSingle();
+
+    if (!user) return res.json({ message: genericMsg });
 
     const token  = crypto.randomBytes(32).toString('hex');
     const expiry = Date.now() + 60 * 60 * 1000; // 1 hour
 
-    await db.execute(
-      'UPDATE users SET reset_token = ?, reset_token_expiry = ? WHERE email = ?',
-      [token, expiry, email.toLowerCase().trim()]
-    );
+    const { error } = await supabase
+      .from('users')
+      .update({ reset_token: token, reset_token_expiry: expiry })
+      .eq('email', email.toLowerCase().trim());
+
+    if (error) throw error;
 
     const resetUrl = `${process.env.FRONTEND_URL}/reset-password/${token}`;
 
@@ -131,23 +141,24 @@ const resetPassword = async (req, res, next) => {
       return res.status(400).json({ message: 'Password must be at least 6 characters.' });
     }
 
-    const [rows] = await db.execute(
-      'SELECT id FROM users WHERE reset_token = ? AND reset_token_expiry > ?',
-      [token, Date.now()]
-    );
+    const { data: user } = await supabase
+      .from('users')
+      .select('id, reset_token_expiry')
+      .eq('reset_token', token)
+      .maybeSingle();
 
-    if (rows.length === 0) {
+    if (!user || user.reset_token_expiry < Date.now()) {
       return res.status(400).json({ message: 'This reset link is invalid or has expired.' });
     }
 
     const hashed = await bcrypt.hash(password, 12);
 
-    await db.execute(
-      `UPDATE users
-         SET password = ?, reset_token = NULL, reset_token_expiry = NULL
-       WHERE id = ?`,
-      [hashed, rows[0].id]
-    );
+    const { error } = await supabase
+      .from('users')
+      .update({ password: hashed, reset_token: null, reset_token_expiry: null })
+      .eq('id', user.id);
+
+    if (error) throw error;
 
     res.json({ message: 'Password reset successfully! You can now log in.' });
   } catch (err) {

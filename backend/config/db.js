@@ -15,7 +15,9 @@ const pool = mysql2.createPool({
 pool.getConnection((err, connection) => {
   if (err) {
     console.error('❌ MySQL connection failed:', err.message);
-    process.exit(1);
+    console.error('   → Check DB_HOST, DB_USER, DB_PASSWORD, DB_NAME in .env');
+    // Don't exit — let the server run so requests return a proper error
+    return;
   }
   console.log('✅ MySQL connected successfully');
   connection.release();
