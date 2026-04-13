@@ -47,7 +47,22 @@ cd backend
 npm install
 cp .env.example .env      # Or manually create .env and copy the contents
 ```
-**Important:** Open `backend/.env` and fill in your actual `DB_PASSWORD`. Once done, start the server:
+
+**Important Environment Setup**: You must configure the following variables in your `backend/.env` file before starting the server:
+
+```env
+# Database Credentials
+DB_HOST=localhost
+DB_USER=root
+DB_PASSWORD=your_actual_mysql_password
+DB_NAME=mern_auth_db
+
+# Security
+JWT_SECRET=your_super_secret_long_string
+```
+*(You can leave the `EMAIL_*` variables blank if you aren't testing forgot-password right now.)*
+
+Once those are set, start the server:
 ```bash
 npm run dev               # starts on http://localhost:5000
 ```
