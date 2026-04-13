@@ -26,10 +26,38 @@ const register = async (req, res, next) => {
 
     const hashed = await bcrypt.hash(password, 12);
 
-    await db.execute(
+    const [result] = await db.execute(
       'INSERT INTO users (name, email, phone, password) VALUES (?, ?, ?, ?)',
       [name.trim(), email.toLowerCase().trim(), phone?.trim() || null, hashed]
     );
+
+    const userId = result.insertId;
+
+    // ─── Insert Demo Items ───────────────────────────────────────────────────
+    const demoItems = [
+      {
+        title: 'Welcome to your Dashboard! 👋',
+        description: 'This is a sample item. You can edit, delete, or mark it as complete using the actions menu.',
+        status: 'active'
+      },
+      {
+        title: 'Explore features',
+        description: 'Try testing out the live search, filtering by status, or adding a new item of your own.',
+        status: 'pending'
+      },
+      {
+        title: 'Account setup completed',
+        description: 'You successfully registered and logged into the application.',
+        status: 'completed'
+      }
+    ];
+
+    for (const item of demoItems) {
+      await db.execute(
+        'INSERT INTO items (user_id, title, description, status) VALUES (?, ?, ?, ?)',
+        [userId, item.title, item.description, item.status]
+      );
+    }
 
     res.status(201).json({ message: 'Registration successful! Please log in.' });
   } catch (err) {
