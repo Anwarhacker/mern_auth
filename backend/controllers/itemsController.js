@@ -1,4 +1,4 @@
-const supabase = require('../config/supabase');
+const db = require('../config/db');
 
 // ─── Create Item ──────────────────────────────────────────────────────────────
 const createItem = async (req, res, next) => {
@@ -13,20 +13,13 @@ const createItem = async (req, res, next) => {
     const validStatuses = ['active', 'pending', 'completed'];
     const itemStatus = validStatuses.includes(status) ? status : 'pending';
 
-    const { data: newItem, error } = await supabase
-      .from('items')
-      .insert({
-        user_id:     userId,
-        title:       title.trim(),
-        description: description?.trim() || null,
-        status:      itemStatus,
-      })
-      .select()
-      .single();
+    const [result] = await db.execute(
+      'INSERT INTO items (user_id, title, description, status) VALUES (?, ?, ?, ?)',
+      [userId, title.trim(), description?.trim() || null, itemStatus]
+    );
 
-    if (error) throw error;
-
-    res.status(201).json({ item: newItem, message: 'Item created successfully.' });
+    const [newItem] = await db.execute('SELECT * FROM items WHERE id = ?', [result.insertId]);
+    res.status(201).json({ item: newItem[0], message: 'Item created successfully.' });
   } catch (err) {
     next(err);
   }
@@ -37,23 +30,23 @@ const getItems = async (req, res, next) => {
   try {
     const userId = req.user.id;
 
-    const { data: items, error } = await supabase
-      .from('items')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false });
+    const [items] = await db.execute(
+      'SELECT * FROM items WHERE user_id = ? ORDER BY created_at DESC',
+      [userId]
+    );
 
-    if (error) throw error;
+    const [statsRows] = await db.execute(
+      `SELECT
+         COUNT(*)                       AS total,
+         SUM(status = 'active')         AS active,
+         SUM(status = 'pending')        AS pending,
+         SUM(status = 'completed')      AS completed
+       FROM items
+       WHERE user_id = ?`,
+      [userId]
+    );
 
-    // Compute stats in JS (avoids an extra DB round-trip)
-    const stats = {
-      total:     items.length,
-      active:    items.filter((i) => i.status === 'active').length,
-      pending:   items.filter((i) => i.status === 'pending').length,
-      completed: items.filter((i) => i.status === 'completed').length,
-    };
-
-    res.json({ items, stats });
+    res.json({ items, stats: statsRows[0] });
   } catch (err) {
     next(err);
   }
@@ -62,20 +55,16 @@ const getItems = async (req, res, next) => {
 // ─── Get Single Item ──────────────────────────────────────────────────────────
 const getItem = async (req, res, next) => {
   try {
-    const { data: item, error } = await supabase
-      .from('items')
-      .select('*')
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id)
-      .maybeSingle();
+    const [rows] = await db.execute(
+      'SELECT * FROM items WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
 
-    if (error) throw error;
-
-    if (!item) {
+    if (rows.length === 0) {
       return res.status(404).json({ message: 'Item not found.' });
     }
 
-    res.json({ item });
+    res.json({ item: rows[0] });
   } catch (err) {
     next(err);
   }
@@ -89,34 +78,28 @@ const updateItem = async (req, res, next) => {
     const userId = req.user.id;
 
     // Fetch current item (ensures ownership)
-    const { data: current, error: fetchErr } = await supabase
-      .from('items')
-      .select('*')
-      .eq('id', id)
-      .eq('user_id', userId)
-      .maybeSingle();
+    const [existing] = await db.execute(
+      'SELECT * FROM items WHERE id = ? AND user_id = ?',
+      [id, userId]
+    );
+    if (existing.length === 0) {
+      return res.status(404).json({ message: 'Item not found.' });
+    }
 
-    if (fetchErr) throw fetchErr;
-    if (!current) return res.status(404).json({ message: 'Item not found.' });
-
+    const current = existing[0];
     const validStatuses = ['active', 'pending', 'completed'];
 
-    const { data: updated, error: updateErr } = await supabase
-      .from('items')
-      .update({
-        title:       title?.trim()       || current.title,
-        description: description !== undefined ? description?.trim() || null : current.description,
-        status:      validStatuses.includes(status) ? status : current.status,
-        updated_at:  new Date().toISOString(),
-      })
-      .eq('id', id)
-      .eq('user_id', userId)
-      .select()
-      .single();
+    const newTitle       = title?.trim()       || current.title;
+    const newDescription = description !== undefined ? description?.trim() || null : current.description;
+    const newStatus      = validStatuses.includes(status) ? status : current.status;
 
-    if (updateErr) throw updateErr;
+    await db.execute(
+      'UPDATE items SET title = ?, description = ?, status = ? WHERE id = ? AND user_id = ?',
+      [newTitle, newDescription, newStatus, id, userId]
+    );
 
-    res.json({ item: updated, message: 'Item updated successfully.' });
+    const [updated] = await db.execute('SELECT * FROM items WHERE id = ?', [id]);
+    res.json({ item: updated[0], message: 'Item updated successfully.' });
   } catch (err) {
     next(err);
   }
@@ -125,24 +108,19 @@ const updateItem = async (req, res, next) => {
 // ─── Delete Item ──────────────────────────────────────────────────────────────
 const deleteItem = async (req, res, next) => {
   try {
-    const { data: existing } = await supabase
-      .from('items')
-      .select('id')
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id)
-      .maybeSingle();
+    const [existing] = await db.execute(
+      'SELECT id FROM items WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
 
-    if (!existing) {
+    if (existing.length === 0) {
       return res.status(404).json({ message: 'Item not found.' });
     }
 
-    const { error } = await supabase
-      .from('items')
-      .delete()
-      .eq('id', req.params.id)
-      .eq('user_id', req.user.id);
-
-    if (error) throw error;
+    await db.execute(
+      'DELETE FROM items WHERE id = ? AND user_id = ?',
+      [req.params.id, req.user.id]
+    );
 
     res.json({ message: 'Item deleted successfully.' });
   } catch (err) {
